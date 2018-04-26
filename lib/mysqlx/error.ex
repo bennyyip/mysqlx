@@ -1,4 +1,5 @@
 defmodule Mysqlx.Error do
+  @moduledoc false
   defexception [:message, :mariadb, :connection_id]
 
   @type t :: %Mysqlx.Error{}

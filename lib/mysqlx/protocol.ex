@@ -1,8 +1,10 @@
 defmodule Mysqlx.Protocol do
+  @moduledoc false
   require Logger
   use DBConnection
   use Bitwise
 
+  alias DBConnection.ConnectionError, as: DBConnectionError
   import Mysqlx.Messages
 
   @maxpacketbytes 50_000_000
@@ -35,18 +37,27 @@ defmodule Mysqlx.Protocol do
   @cursor_type_no_cursor 0x00
   @cursor_type_read_only 0x01
 
-  @capabilities @client_long_password ||| @client_found_rows ||| @client_long_flag |||
-                  @client_local_files ||| @client_protocol_41 ||| @client_transactions |||
-                  @client_secure_connection ||| @client_multi_statements ||| @client_multi_results |||
-                  @client_ps_multi_results ||| @client_deprecate_eof
+  @capabilities @client_long_password ||| @client_found_rows |||
+                  @client_long_flag ||| @client_local_files |||
+                  @client_protocol_41 ||| @client_transactions |||
+                  @client_secure_connection ||| @client_multi_statements |||
+                  @client_multi_results ||| @client_ps_multi_results |||
+                  @client_deprecate_eof
 
-  defstruct sock: nil, timeout: nil, buffer: "", state: nil, deprecated_eof: true
+  defstruct sock: nil,
+            timeout: nil,
+            buffer: "",
+            state: nil,
+            deprecated_eof: true
 
   @type state :: %__MODULE__{}
 
   defp default_opts(opts) do
     opts
-    |> Keyword.put_new(:username, System.get_env("MDBUSER") || System.get_env("USER"))
+    |> Keyword.put_new(
+      :username,
+      System.get_env("MDBUSER") || System.get_env("USER")
+    )
     |> Keyword.put_new(:password, System.get_env("MDBPASSWORD"))
     |> Keyword.put_new(:hostname, System.get_env("MDBHOST") || "localhost")
     |> Keyword.put_new(:port, System.get_env("MDBPORT") || 3306)
@@ -156,10 +167,13 @@ defmodule Mysqlx.Protocol do
          s
        ) do
     <<flag::size(32)>> = <<flag2::size(16), flag1::size(16)>>
+
     deprecated_eof = (flag &&& @client_deprecate_eof) == @client_deprecate_eof
 
     Logger.info("Got handshake packet")
-    msg_handshake(auth_plugin_data_1: salt1, auth_plugin_data_2: salt2) = handshake
+
+    msg_handshake(auth_plugin_data_1: salt1, auth_plugin_data_2: salt2) =
+      handshake
 
     scramble =
       case password = opts[:password] do
@@ -183,13 +197,20 @@ defmodule Mysqlx.Protocol do
     msg_send(msg, s, seqnum + 1)
     Logger.info("Sent handshake response packet")
 
-    handshake_recv(%{s | state: :handshake_send, deprecated_eof: deprecated_eof}, nil)
+    handshake_recv(
+      %{s | state: :handshake_send, deprecated_eof: deprecated_eof},
+      nil
+    )
   end
 
   # recieve ok packet
   defp handle_handshake(
          packet(
-           msg: msg_ok(affected_rows: _affected_rows, last_insert_id: _last_insert_id) = _packet
+           msg:
+             msg_ok(
+               affected_rows: _affected_rows,
+               last_insert_id: _last_insert_id
+             ) = _packet
          ),
          nil,
          state
@@ -214,6 +235,7 @@ defmodule Mysqlx.Protocol do
   end
 
   defp normalize_port(port) when is_binary(port), do: String.to_integer(port)
+
   defp normalize_port(port) when is_integer(port), do: port
 
   defp msg_send(msg, %{sock: {sock_mod, sock}}, seqnum),
@@ -263,7 +285,8 @@ defmodule Mysqlx.Protocol do
   end
 
   def msg_decode(
-        <<len::size(24)-little-integer, _seqnum::size(8)-integer, message::binary>> = header,
+        <<len::size(24)-little-integer, _seqnum::size(8)-integer,
+          message::binary>> = header,
         state
       )
       when byte_size(message) >= len do
@@ -290,7 +313,7 @@ defmodule Mysqlx.Protocol do
   end
 
   defp conn_error(message) do
-    DBConnection.ConnectionError.exception(message)
+    DBConnectionError.exception(message)
   end
 
   defp capabilities(opts) do
@@ -304,7 +327,9 @@ defmodule Mysqlx.Protocol do
     do: mysql_native_password(password, salt)
 
   defp password("", password, salt), do: mysql_native_password(password, salt)
-  defp password(@mysql_old_password, password, salt), do: mysql_old_password(password, salt)
+
+  defp password(@mysql_old_password, password, salt),
+    do: mysql_old_password(password, salt)
 
   defp mysql_native_password(password, salt) do
     stage1 = :crypto.hash(:sha, password)
@@ -319,7 +344,8 @@ defmodule Mysqlx.Protocol do
 
   defp bxor_binary(b1, b2) do
     for(
-      {e1, e2} <- List.zip([:erlang.binary_to_list(b1), :erlang.binary_to_list(b2)]),
+      {e1, e2} <-
+        List.zip([:erlang.binary_to_list(b1), :erlang.binary_to_list(b2)]),
       do: e1 ^^^ e2
     )
     |> :erlang.list_to_binary()

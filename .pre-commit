@@ -1,0 +1,9 @@
+#!/bin/sh
+
+mix format && mix test
+RES=$?
+
+if [ $RES -ne 0 ]; then
+    exit $RES
+fi
+

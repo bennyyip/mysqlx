@@ -22,8 +22,10 @@ defmodule Mysqlx.MixProject do
   defp deps do
     [
       {:jason, "~> 1.0", only: :test},
+      {:credo, "~> 0.9.1", only: [:dev, :test], runtime: false},
       {:decimal, "~> 1.0"},
-      {:db_connection, "~> 1.1", github: "elixir-ecto/db_connection", ref: "4947966"},
+      {:db_connection, "~> 1.1",
+       github: "elixir-ecto/db_connection", ref: "4947966"},
       {:connection, "~> 1.0"}
     ]
   end

@@ -13,7 +13,16 @@ defmodule Mysqlx.Messages do
 
   defrecord :packet, [:size, :seqnum, :msg, :body]
 
-  @auth_types [ok: 0, kerberos: 2, cleartext: 3, md5: 5, scm: 6, gss: 7, sspi: 9, gss_cont: 8]
+  @auth_types [
+    ok: 0,
+    kerberos: 2,
+    cleartext: 3,
+    md5: 5,
+    scm: 6,
+    gss: 7,
+    sspi: 9,
+    gss_cont: 8
+  ]
   # Drop warning for now
   _ = @auth_types
 
@@ -39,9 +48,20 @@ defmodule Mysqlx.Messages do
   # Drop warning for now
   _ = @error_fields
 
+  defrecord :msg_ok, [
+    :affected_rows,
+    :last_insert_id,
+    :server_status,
+    :warning_count,
+    :info
+  ]
 
-  defrecord :msg_ok, [:affected_rows, :last_insert_id, :server_status, :warning_count, :info]
-  defrecord :msg_err, [:error_code, :state_marker, :sql_state, :error_message]
+  defrecord :msg_err, [
+    :error_code,
+    :state_marker,
+    :sql_state,
+    :error_message
+  ]
 
   defrecord :msg_handshake, [
     :protocol_version,
@@ -66,7 +86,8 @@ defmodule Mysqlx.Messages do
   ]
 
   def decode(
-        <<len::size(24)-little-integer, seqnum::8, body::binary(len), rest::binary>>,
+        <<len::size(24)-little-integer, seqnum::8, body::binary(len),
+          rest::binary>>,
         state
       ) do
     msg = decode_msg(body, state)
@@ -82,7 +103,8 @@ defmodule Mysqlx.Messages do
 
   # msg_err
   defp decode_msg(
-         <<255::8, error_code::int16, ?#, sql_state::binary(5), error_message::binary>> = _body,
+         <<255::8, error_code::int16, ?#, sql_state::binary(5),
+           error_message::binary>> = _body,
          _state
        ) do
     msg_err(
@@ -97,7 +119,9 @@ defmodule Mysqlx.Messages do
   defp decode_msg(<<0x00::8, rest::binary>> = _body, _state) do
     {affected_rows, rest} = length_encoded_integer(rest)
     {last_insert_id, rest} = length_encoded_integer(rest)
-    <<server_status::little-size(16), warning_count::little-size(16), info::binary>> = rest
+
+    <<server_status::little-size(16), warning_count::little-size(16),
+      info::binary>> = rest
 
     msg_ok(
       affected_rows: affected_rows,
@@ -113,8 +137,9 @@ defmodule Mysqlx.Messages do
     [server_version, rest] = string_nul(rest)
 
     <<connection_id::little-size(32), auth_plugin_data_1::binary(8), 0::8,
-      capability_flags_1::little-size(16), character_set::8, status_flags::little-size(16),
-      capability_flags_2::little-size(16), rest::binary>> = rest
+      capability_flags_1::little-size(16), character_set::8,
+      status_flags::little-size(16), capability_flags_2::little-size(16),
+      rest::binary>> = rest
 
     {auth_plugin_data_2, rest} = auth_plugin_data_2(rest)
     [plugin, _] = string_nul(rest)
@@ -144,12 +169,14 @@ defmodule Mysqlx.Messages do
            database: database
          )
        ) do
-    <<client_capabilities::little-size(32), max_packet_size::little-size(32), character_set::8,
-      0::23*8, username::binary, 0::8, byte_size(password)::8, password::binary, database::binary,
-      0::8>>
+    <<client_capabilities::little-size(32), max_packet_size::little-size(32),
+      character_set::8, 0::23*8, username::binary, 0::8, byte_size(password)::8,
+      password::binary, database::binary, 0::8>>
   end
 
-  # Due to Bug#59453(http://bugs.mysql.com/bug.php?id=59453) the auth-plugin-name is missing the terminating NUL-char in versions prior to 5.5.10 and 5.6.2.
+  # Due to Bug#59453(http://bugs.mysql.com/bug.php?id=59453)
+  # the auth-plugin-name is missing the terminating
+  # NUL-char in versions prior to 5.5.10 and 5.6.2.
   def auth_plugin_data_2(<<length_auth_plugin_data::8, _::80, next::binary>>) do
     length = max(13, length_auth_plugin_data - 8)
     length_nul_terminated = length - 1
@@ -189,7 +216,7 @@ defmodule Mysqlx.Messages do
   defp to_length_encoded_integer(int) do
     case int do
       int when int <= 250 -> <<int::8>>
-      int when int <= 65535 -> <<252::8, int::16-little>>
+      int when int <= 65_535 -> <<252::8, int::16-little>>
       int when int <= 16_777_215 -> <<253::8, int::24-little>>
       int -> <<254::8, int::64-little>>
     end
