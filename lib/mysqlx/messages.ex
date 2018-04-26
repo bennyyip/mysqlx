@@ -85,6 +85,12 @@ defmodule Mysqlx.Messages do
     :database
   ]
 
+  defrecord :msg_ssl_request, [
+    :client_capabilities,
+    :max_packet_size,
+    :character_set
+  ]
+
   def decode(
         <<len::size(24)-little-integer, seqnum::8, body::binary(len),
           rest::binary>>,
@@ -156,6 +162,18 @@ defmodule Mysqlx.Messages do
       auth_plugin_data_2: auth_plugin_data_2,
       plugin: plugin
     )
+  end
+
+  # msg_ssl_request
+  defp encode(
+         msg_ssl_request(
+           client_capabilities: client_capabilities,
+           max_packet_size: max_packet_size,
+           character_set: character_set
+         )
+       ) do
+    <<client_capabilities::little-size(32), max_packet_size::little-size(32),
+      character_set::8, 0::23*8>>
   end
 
   # msg_handshake_response

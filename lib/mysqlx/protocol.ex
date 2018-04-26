@@ -47,8 +47,10 @@ defmodule Mysqlx.Protocol do
   defstruct sock: nil,
             timeout: nil,
             buffer: "",
+            # :handshake | :handshake_send
             state: nil,
-            deprecated_eof: true
+            deprecated_eof: true,
+            ssl_state: nil
 
   @type state :: %__MODULE__{}
 
@@ -86,7 +88,16 @@ defmodule Mysqlx.Protocol do
   def connect(opts) do
     opts = default_opts(opts)
 
-    {host, port} = {to_charlist(opts[:hostname]), opts[:port]}
+    {host, port} =
+      case Keyword.fetch(opts, :socket) do
+        # unix domain socket
+        {:ok, socket} ->
+          {{:local, socket}, 0}
+
+        # hostname:port
+        :error ->
+          {parse_host(opts[:hostname]), opts[:port]}
+      end
 
     timeout = opts[:timeout] || @timeout
     sock_opts = [send_timeout: timeout] ++ (opts[:socket_options] || [])
@@ -237,6 +248,18 @@ defmodule Mysqlx.Protocol do
   defp normalize_port(port) when is_binary(port), do: String.to_integer(port)
 
   defp normalize_port(port) when is_integer(port), do: port
+
+  defp parse_host(host) do
+    host = if is_binary(host), do: String.to_charlist(host), else: host
+
+    case :inet.parse_strict_address(host) do
+      {:ok, address} ->
+        address
+
+      _ ->
+        host
+    end
+  end
 
   defp msg_send(msg, %{sock: {sock_mod, sock}}, seqnum),
     do: msg_send(msg, {sock_mod, sock}, seqnum)
