@@ -50,7 +50,8 @@ defmodule Mysqlx.Protocol do
             # :handshake | :handshake_send
             state: nil,
             deprecated_eof: true,
-            ssl_state: nil
+            #  :undefined | :not_used | :ssl_handshake | :connected
+            ssl_conn_state: :undefined
 
   @type state :: %__MODULE__{}
 
@@ -77,8 +78,8 @@ defmodule Mysqlx.Protocol do
     {:ok, state}
   end
 
-  # TODO
-  def checkin(state) do
+  def checkin({%{sock: {sock_mod, sock}}} = state) do
+    setopts(sock_mod, sock, active: :once)
     {:ok, state}
   end
 
@@ -101,7 +102,12 @@ defmodule Mysqlx.Protocol do
 
     timeout = opts[:timeout] || @timeout
     sock_opts = [send_timeout: timeout] ++ (opts[:socket_options] || [])
-    s = %__MODULE__{timeout: timeout, state: :handshake}
+
+    s = %__MODULE__{
+      timeout: timeout,
+      state: :handshake,
+      ssl_conn_state: set_initial_ssl_conn_state(opts)
+    }
 
     case connect(host, port, sock_opts, timeout, s) do
       {:ok, s} -> handshake_recv(s, %{opts: opts})
@@ -146,6 +152,13 @@ defmodule Mysqlx.Protocol do
     :ok
   end
 
+  # TODO
+  def ping({%{sock: {sock_mod, sock}}} = state) do
+    # setopts(sock_mod, sock, active: :once)
+    # msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+    {:ok, state}
+  end
+
   defp handshake_recv(state, request) do
     case msg_recv(state) do
       {:ok, packet, state} ->
@@ -160,6 +173,36 @@ defmodule Mysqlx.Protocol do
 
       {:error, reason} ->
         Logger.error(inspect(reason))
+    end
+  end
+
+  # SSL Request
+  defp handle_handshake(
+         packet(seqnum: seqnum) = packet,
+         opts,
+         %{ssl_conn_state: :ssl_handshake} = s
+       ) do
+    # Create and send an SSL request packet per the spec:
+    # https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
+    msg =
+      msg_ssl_request(
+        client_capabilities: ssl_capabilities(opts),
+        max_packet_size: @maxpacketbytes,
+        character_set: 8
+      )
+
+    msg_send(msg, s, new_seqnum = seqnum + 1)
+
+    Logger.info("Sent SSL requelst")
+
+    case upgrade_to_ssl(s, opts) do
+      {:ok, new_state} ->
+        # move along to the actual handshake; now over SSL/TLS
+        Logger.info("SSL connection established")
+        handle_handshake(packet(packet, seqnum: new_seqnum), opts, new_state)
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -245,6 +288,18 @@ defmodule Mysqlx.Protocol do
     {:error, %Mysqlx.Error{}}
   end
 
+  defp set_initial_ssl_conn_state(opts) do
+    if opts[:ssl] && has_ssl_opts?(opts[:ssl_opts]) do
+      :ssl_handshake
+    else
+      :not_used
+    end
+  end
+
+  defp has_ssl_opts?(nil), do: false
+  defp has_ssl_opts?([]), do: false
+  defp has_ssl_opts?(ssl_opts) when is_list(ssl_opts), do: true
+
   defp normalize_port(port) when is_binary(port), do: String.to_integer(port)
 
   defp normalize_port(port) when is_integer(port), do: port
@@ -321,6 +376,9 @@ defmodule Mysqlx.Protocol do
     {:more, 0}
   end
 
+  defp setopts(:gen_tcp, sock, opts), do: :inet.setopts(sock, opts)
+  defp setopts(:ssl, sock, opts), do: :ssl.setopts(sock, opts)
+
   defp conn_error(mod, action, reason) when reason in @nonposix_errors do
     conn_error("#{mod} #{action}: #{reason}")
   end
@@ -339,10 +397,33 @@ defmodule Mysqlx.Protocol do
     DBConnectionError.exception(message)
   end
 
+  defp upgrade_to_ssl(%{sock: {_sock_mod, sock}} = s, %{opts: opts}) do
+    ssl_opts = opts[:ssl_opts]
+
+    case :ssl.connect(sock, ssl_opts, opts[:timeout]) do
+      {:ok, ssl_sock} ->
+        # switch to the ssl connection module
+        # set the socket
+        # move ssl_conn_state to :connected
+        {:ok, %{s | sock: {:ssl, ssl_sock}, ssl_conn_state: :connected}}
+
+      {:error, reason} ->
+        {:error,
+         %Mysqlx.Error{message: "failed to upgraded socket: #{inspect(reason)}"}}
+    end
+  end
+
   defp capabilities(opts) do
     case opts[:skip_database] do
       true -> {"", @capabilities}
       _ -> {opts[:database], @capabilities ||| @client_connect_with_db}
+    end
+  end
+
+  defp ssl_capabilities(%{opts: opts}) do
+    case opts[:skip_database] do
+      true -> @capabilities ||| @client_ssl
+      _ -> @capabilities ||| @client_connect_with_db ||| @client_ssl
     end
   end
 

@@ -13,6 +13,45 @@ defmodule Mysqlx.Messages do
 
   defrecord :packet, [:size, :seqnum, :msg, :body]
 
+  @commands [
+    com_sleep: 0x00,
+    com_quit: 0x01,
+    com_init_db: 0x02,
+    com_query: 0x03,
+    com_field_list: 0x04,
+    com_create_db: 0x05,
+    com_drop_db: 0x06,
+    com_refresh: 0x07,
+    com_shutdown: 0x08,
+    com_statistics: 0x09,
+    com_process_info: 0x0A,
+    com_connect: 0x0B,
+    com_process_kill: 0x0C,
+    com_debug: 0x0D,
+    com_ping: 0x0E,
+    com_time: 0x0F,
+    com_delayed_inser: 0x10,
+    com_change_use: 0x11,
+    com_binlog_dump: 0x12,
+    com_table_dump: 0x13,
+    com_connect_out: 0x14,
+    com_register_slave: 0x15,
+    com_stmt_prepare: 0x16,
+    com_stmt_execute: 0x17,
+    com_stmt_send_long_data: 0x18,
+    com_stmt_close: 0x19,
+    com_stmt_reset: 0x1A,
+    com_set_option: 0x1B,
+    com_stmt_fetch: 0x1C,
+    com_daemon: 0x1D,
+    com_binlog_dump_gtid: 0x1E,
+    com_reset_connection: 0x1F
+  ]
+
+  for {command, number} <- @commands do
+    defmacro unquote(command)(), do: unquote(number)
+  end
+
   @auth_types [
     ok: 0,
     kerberos: 2,
@@ -91,6 +130,11 @@ defmodule Mysqlx.Messages do
     :character_set
   ]
 
+  defrecord :msg_text_command, [
+    :header,
+    :body
+  ]
+
   def decode(
         <<len::size(24)-little-integer, seqnum::8, body::binary(len),
           rest::binary>>,
@@ -165,7 +209,7 @@ defmodule Mysqlx.Messages do
   end
 
   # msg_ssl_request
-  defp encode(
+  defp encode_msg(
          msg_ssl_request(
            client_capabilities: client_capabilities,
            max_packet_size: max_packet_size,
@@ -190,6 +234,16 @@ defmodule Mysqlx.Messages do
     <<client_capabilities::little-size(32), max_packet_size::little-size(32),
       character_set::8, 0::23*8, username::binary, 0::8, byte_size(password)::8,
       password::binary, database::binary, 0::8>>
+  end
+
+  # msg_text_command
+  defp encode_msg(
+         msg_text_command(
+           header: header,
+           body: body
+         )
+       ) do
+    <<header::8, body::binary>>
   end
 
   # Due to Bug#59453(http://bugs.mysql.com/bug.php?id=59453)
