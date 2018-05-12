@@ -8,6 +8,7 @@ defmodule StartTest do
       username: "mysqlx_test",
       password: "mysqlx_test_password",
       database: "test",
+      hostname: "::1",
       after_connect: fn _ -> send(parent, :hi) end
     ]
 
