@@ -191,7 +191,8 @@ defmodule Mysqlx.Protocol do
         character_set: 8
       )
 
-    msg_send(msg, s, new_seqnum = seqnum + 1)
+    new_seqnum = seqnum + 1
+    msg_send(msg, s, new_seqnum)
 
     Logger.info("Sent SSL requelst")
 
