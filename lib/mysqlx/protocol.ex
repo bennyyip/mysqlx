@@ -6,6 +6,7 @@ defmodule Mysqlx.Protocol do
 
   alias DBConnection.ConnectionError, as: DBConnectionError
   import Mysqlx.Messages
+  import Mysqlx.ProtocolHelper
 
   @maxpacketbytes 50_000_000
   @mysql_native_password "mysql_native_password"
@@ -72,15 +73,15 @@ defmodule Mysqlx.Protocol do
   end
 
   # DB Connection callbacks
-
-  # TODO
-  def checkout(state) do
-    {:ok, state}
+  def checkout(%{buffer: :active_once} = s) do
+    case setopts(s, [active: false], :active_once) do
+      :ok -> recv_buffer(s)
+      {:disconnect, _, _} = dis -> dis
+    end
   end
 
-  def checkin({%{sock: {sock_mod, sock}}} = state) do
-    setopts(sock_mod, sock, active: :once)
-    {:ok, state}
+  def checkin(%{buffer: buffer} = s) when is_binary(buffer) do
+    activate(s, buffer)
   end
 
   @spec connect(Keyword.t()) ::
@@ -147,15 +148,62 @@ defmodule Mysqlx.Protocol do
     end
   end
 
-  # TODO
-  def disconnect(err, state) do
+  @doc """
+  DBConnection callback
+  """
+  def disconnect(_, state = %{sock: {sock_mod, sock}}) do
+    msg_send(msg_text_command(header: com_quit(), body: ""), state, 0)
+
+    case msg_recv(state) do
+      {:ok, packet(msg: msg_ok()), _state} ->
+        sock_mod.close(sock)
+
+      {:ok, packet(msg: _), _state} ->
+        sock_mod.close(sock)
+
+      {:error, _} ->
+        sock_mod.close(sock)
+    end
+
+    _ = recv_buffer(state)
     :ok
   end
 
-  # TODO
-  def ping({%{sock: {sock_mod, sock}}} = state) do
-    # setopts(sock_mod, sock, active: :once)
-    # msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+  def do_disconnect(s, {tag, action, reason, buffer}) do
+    err = Mysqlx.Error.exception(tag: tag, action: action, reason: reason)
+    do_disconnect(s, err, buffer)
+  end
+
+  defp do_disconnect(
+         %{connection_id: connection_id} = state,
+         %Mysqlx.Error{} = err,
+         buffer
+       ) do
+    {:disconnect, %{err | connection_id: connection_id},
+     %{state | buffer: buffer}}
+  end
+
+  def_handle(:ping_recv, :ping_handle)
+
+  def ping(%{buffer: buffer} = state) when is_binary(buffer) do
+    msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+    ping_recv(state, :ping)
+  end
+
+  def ping(state) do
+    case checkout(state) do
+      {:ok, state} ->
+        msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+        {:ok, state} = ping_recv(state, :ping)
+        checkin(state)
+
+      {:disconnect, _, _} = dis ->
+        dis
+    end
+  end
+
+  defp ping_handle(packet(msg: msg_ok()), :ping, %{buffer: buffer} = state)
+       when is_binary(buffer) do
     {:ok, state}
   end
 
@@ -271,7 +319,8 @@ defmodule Mysqlx.Protocol do
          state
        ) do
     Logger.info("Connected to MySQL server")
-    {:ok, state}
+
+    activate(state, state.buffer) |> connected()
     # statement = "SET CHARACTER SET " <> (state.opts[:charset] || "utf8")
     # query = %Query{type: :text, statement: statement}
     # case send_text_query(state, statement) |> text_query_recv(query) do
@@ -296,6 +345,9 @@ defmodule Mysqlx.Protocol do
       :not_used
     end
   end
+
+  defp tag(:gen_tcp), do: :tcp
+  defp tag(:ssl), do: :ssl
 
   defp has_ssl_opts?(nil), do: false
   defp has_ssl_opts?([]), do: false
@@ -377,9 +429,6 @@ defmodule Mysqlx.Protocol do
     {:more, 0}
   end
 
-  defp setopts(:gen_tcp, sock, opts), do: :inet.setopts(sock, opts)
-  defp setopts(:ssl, sock, opts), do: :ssl.setopts(sock, opts)
-
   defp conn_error(mod, action, reason) when reason in @nonposix_errors do
     conn_error("#{mod} #{action}: #{reason}")
   end
@@ -397,6 +446,71 @@ defmodule Mysqlx.Protocol do
   defp conn_error(message) do
     DBConnectionError.exception(message)
   end
+
+  defp connected({:disconnect, error, state}) do
+    disconnect(error, state)
+    {:error, error}
+  end
+
+  defp connected(other), do: other
+
+  defp recv_buffer(%{sock: {:gen_tcp, sock}} = s) do
+    receive do
+      {:tcp, ^sock, buffer} ->
+        {:ok, %{s | buffer: buffer}}
+
+      {:tcp_closed, ^sock} ->
+        {:disconnect, {:tcp, "async_recv", :closed, ""}}
+
+      {:tcp_error, ^sock, reason} ->
+        {:disconnect, {:tcp, "async_recv", reason, ""}}
+    after
+      0 ->
+        {:ok, %{s | buffer: <<>>}}
+    end
+  end
+
+  defp recv_buffer(%{sock: {:ssl, sock}} = s) do
+    receive do
+      {:ssl, ^sock, buffer} ->
+        {:ok, %{s | buffer: buffer}}
+
+      {:ssl_closed, ^sock} ->
+        {:disconnect, {:ssl, "async_recv", :closed, ""}}
+
+      {:ssl_error, ^sock, reason} ->
+        {:disconnect, {:ssl, "async_recv", reason, ""}}
+    after
+      0 ->
+        {:ok, %{s | buffer: <<>>}}
+    end
+  end
+
+  ## fake [active: once] if buffer not empty
+  defp activate(s, <<>>) do
+    case setopts(s, [active: :once], <<>>) do
+      :ok -> {:ok, %{s | buffer: :active_once}}
+      other -> other
+    end
+  end
+
+  defp activate(%{sock: {mod, sock}} = s, buffer) do
+    _ = send(self(), {tag(mod), sock, buffer})
+    {:ok, s}
+  end
+
+  defp setopts(%{sock: {mod, sock}} = s, opts, buffer) do
+    case setopts(mod, sock, opts) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        do_disconnect(s, {tag(mod), "setopts", reason, buffer})
+    end
+  end
+
+  defp setopts(:gen_tcp, sock, opts), do: :inet.setopts(sock, opts)
+  defp setopts(:ssl, sock, opts), do: :ssl.setopts(sock, opts)
 
   defp upgrade_to_ssl(%{sock: {_sock_mod, sock}} = s, %{opts: opts}) do
     ssl_opts = opts[:ssl_opts]
