@@ -7,6 +7,8 @@ defmodule Mysqlx.Protocol do
   alias DBConnection.ConnectionError, as: DBConnectionError
   import Mysqlx.Messages
   import Mysqlx.ProtocolHelper
+  alias Mysqlx.Query
+  alias Mysqlx.Column
 
   @maxpacketbytes 50_000_000
   @mysql_native_password "mysql_native_password"
@@ -50,7 +52,9 @@ defmodule Mysqlx.Protocol do
             buffer: "",
             # :handshake | :handshake_send
             state: nil,
+            state_data: nil,
             deprecated_eof: true,
+            connection_id: nil,
             #  :undefined | :not_used | :ssl_handshake | :connected
             ssl_conn_state: :undefined
 
@@ -107,7 +111,8 @@ defmodule Mysqlx.Protocol do
     s = %__MODULE__{
       timeout: timeout,
       state: :handshake,
-      ssl_conn_state: set_initial_ssl_conn_state(opts)
+      ssl_conn_state: set_initial_ssl_conn_state(opts),
+      connection_id: self()
     }
 
     case connect(host, port, sock_opts, timeout, s) do
@@ -152,7 +157,7 @@ defmodule Mysqlx.Protocol do
   DBConnection callback
   """
   def disconnect(_, state = %{sock: {sock_mod, sock}}) do
-    msg_send(msg_text_command(header: com_quit(), body: ""), state, 0)
+    msg_send(msg_text_cmd(command: com_quit(), statement: ""), state, 0)
 
     case msg_recv(state) do
       {:ok, packet(msg: msg_ok()), _state} ->
@@ -167,6 +172,10 @@ defmodule Mysqlx.Protocol do
 
     _ = recv_buffer(state)
     :ok
+  end
+
+  defp recv_error(reason, %{sock: {sock_mod, _}} = state) do
+    do_disconnect(state, {tag(sock_mod), "recv", reason, ""})
   end
 
   def do_disconnect(s, {tag, action, reason, buffer}) do
@@ -186,14 +195,14 @@ defmodule Mysqlx.Protocol do
   def_handle(:ping_recv, :ping_handle)
 
   def ping(%{buffer: buffer} = state) when is_binary(buffer) do
-    msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+    msg_send(msg_text_cmd(command: com_ping(), statement: ""), state, 0)
     ping_recv(state, :ping)
   end
 
   def ping(state) do
     case checkout(state) do
       {:ok, state} ->
-        msg_send(msg_text_command(header: com_ping(), body: ""), state, 0)
+        msg_send(msg_text_cmd(command: com_ping(), statement: ""), state, 0)
         {:ok, state} = ping_recv(state, :ping)
         checkin(state)
 
@@ -205,6 +214,74 @@ defmodule Mysqlx.Protocol do
   defp ping_handle(packet(msg: msg_ok()), :ping, %{buffer: buffer} = state)
        when is_binary(buffer) do
     {:ok, state}
+  end
+
+  defp send_text_query(s, statement) do
+    msg_send(msg_text_cmd(command: com_query(), statement: statement), s, 0)
+    %{s | state: :column_count}
+  end
+
+  defp text_query_recv(state, query) do
+    case text_query_recv(state) do
+      {:resultset, columns, rows, _flags, state} ->
+        result = %Mysqlx.Result{rows: rows, connection_id: state.connection_id}
+        {:ok, {result, columns}, clean_state(state)}
+
+      {:ok, packet(msg: msg_ok()) = packet, state} ->
+        handle_ok_packet(packet, query, state)
+
+      {:ok, packet, state} ->
+        {:error, "TODO"}
+
+      # handle_error(packet, query, state)
+
+      {:error, reason} ->
+        recv_error(reason, state)
+    end
+  end
+
+  defp text_query_recv(state) do
+    state = %{state | state: :column_count}
+
+    with {:ok, packet(msg: msg_column_count(column_count: num_cols)), state} <-
+           msg_recv(state),
+         {:eof, columns, _, state} <- columns_recv(state, num_cols),
+         {:eof, rows, flags, state} <- text_rows_recv(state, columns) do
+      {:resultset, columns, rows, flags, state}
+    end
+  end
+
+  defp text_rows_recv(state, columns) do
+    # TODO
+    {:eof, 0, 0, state}
+  end
+
+  defp columns_recv(state, num_cols) do
+    columns_recv(%{state | state: :column_definitions}, num_cols, [])
+  end
+
+  defp columns_recv(state, rem, columns) when rem > 0 do
+    case msg_recv(state) do
+      {:ok,
+       packet(
+         msg:
+           msg_column_definition(
+             type: type,
+             name: name,
+             flags: flags,
+             table: table
+           )
+       ), state} ->
+        column = %Column{name: name, table: table, type: type, flags: flags}
+        columns_recv(state, rem - 1, [column | columns])
+
+      other ->
+        other
+    end
+  end
+
+  defp columns_recv(%{deprecated_eof: true} = state, 0, columns) do
+    {:eof, Enum.reverse(columns), 0, state}
   end
 
   defp handshake_recv(state, request) do
@@ -344,6 +421,41 @@ defmodule Mysqlx.Protocol do
     else
       :not_used
     end
+  end
+
+  def handle_execute(
+        %Query{type: :text, statement: statement} = query,
+        [],
+        _opts,
+        state
+      ) do
+    send_text_query(state, statement) |> text_query_recv(query)
+  end
+
+  defp handle_ok_packet(
+         packet(
+           msg:
+             msg_ok(
+               affected_rows: affected_rows,
+               last_insert_id: last_insert_id
+             )
+         ),
+         _query,
+         s
+       ) do
+    result = %Mysqlx.Result{
+      columns: [],
+      rows: nil,
+      num_rows: affected_rows,
+      last_insert_id: last_insert_id,
+      connection_id: s.connection_id
+    }
+
+    {:ok, {result, nil}, clean_state(s)}
+  end
+
+  defp clean_state(state) do
+    %{state | state: :running, state_data: nil}
   end
 
   defp tag(:gen_tcp), do: :tcp

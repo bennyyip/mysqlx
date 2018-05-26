@@ -130,9 +130,32 @@ defmodule Mysqlx.Messages do
     :character_set
   ]
 
-  defrecord :msg_text_command, [
-    :header,
-    :body
+  defrecord :msg_text_cmd, [
+    :command,
+    :statement
+  ]
+
+  defrecord :msg_column_count, [
+    :column_count
+  ]
+
+  defrecord :msg_column_definition, [
+    :catalog,
+    :schema,
+    :table,
+    :org_table,
+    :name,
+    :org_name,
+    :length_of_fixed_fields,
+    :character_set,
+    :max_column_size,
+    :type,
+    :flags,
+    :decimals
+  ]
+
+  defrecord :msg_text_row, [
+    :row
   ]
 
   def decode(
@@ -208,6 +231,49 @@ defmodule Mysqlx.Messages do
     )
   end
 
+  # msg_column_count
+  defp decode_msg(body, :column_count) do
+    {column_count, _} = length_encoded_integer(body)
+    msg_column_count(column_count: column_count)
+  end
+
+  # msg_column_definition
+  defp decode_msg(body, :column_definitions) do
+    {catalog, rest} = length_encoded_string(body)
+    {schema, rest} = length_encoded_string(rest)
+    {table, rest} = length_encoded_string(rest)
+    {org_table, rest} = length_encoded_string(rest)
+    {name, rest} = length_encoded_string(rest)
+    {org_name, rest} = length_encoded_string(rest)
+    {length_of_fixed_fields, rest} = length_encoded_integer(rest)
+
+    <<character_set::little-size(16), max_column_size::little-size(32), type::8,
+      flags::little-size(16), decimals::8, _::little-size(16)>> = rest
+
+    msg_column_definition(
+      catalog: catalog,
+      schema: schema,
+      table: table,
+      org_table: org_table,
+      name: name,
+      org_name: org_name,
+      length_of_fixed_fields: length_of_fixed_fields,
+      character_set: character_set,
+      max_column_size: max_column_size,
+      type: type,
+      flags: flags,
+      decimals: decimals
+    )
+  end
+
+  # msg_text_row
+  defp decode_msg(
+         body,
+         :text_rows
+       ) do
+    nil
+  end
+
   # msg_ssl_request
   defp encode_msg(
          msg_ssl_request(
@@ -236,14 +302,14 @@ defmodule Mysqlx.Messages do
       password::binary, database::binary, 0::8>>
   end
 
-  # msg_text_command
+  # msg_text_cmd
   defp encode_msg(
-         msg_text_command(
-           header: header,
-           body: body
+         msg_text_cmd(
+           command: command,
+           statement: statement
          )
        ) do
-    <<header::8, body::binary>>
+    <<command::8, statement::binary>>
   end
 
   # Due to Bug#59453(http://bugs.mysql.com/bug.php?id=59453)
