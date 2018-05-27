@@ -51,12 +51,14 @@ defmodule Mysqlx.Protocol do
             timeout: nil,
             buffer: "",
             # :handshake | :handshake_send
+            charset: nil,
             state: nil,
             state_data: nil,
             deprecated_eof: true,
             connection_id: nil,
             #  :undefined | :not_used | :ssl_handshake | :connected
-            ssl_conn_state: :undefined
+            ssl_conn_state: :undefined,
+            json_library: Jason
 
   @type state :: %__MODULE__{}
 
@@ -73,6 +75,7 @@ defmodule Mysqlx.Protocol do
     |> Keyword.put_new(:cache_size, @cache_size)
     |> Keyword.put_new(:sock_type, :tcp)
     |> Keyword.put_new(:socket_options, [])
+    |> Keyword.put_new(:charset, "utf8")
     |> Keyword.update!(:port, &normalize_port/1)
   end
 
@@ -107,12 +110,15 @@ defmodule Mysqlx.Protocol do
 
     timeout = opts[:timeout] || @timeout
     sock_opts = [send_timeout: timeout] ++ (opts[:socket_options] || [])
+    json_library = Application.get_env(:mysqlx, :json_library, Jason)
 
     s = %__MODULE__{
       timeout: timeout,
       state: :handshake,
       ssl_conn_state: set_initial_ssl_conn_state(opts),
-      connection_id: self()
+      connection_id: self(),
+      charset: opts[:charset],
+      json_library: json_library
     }
 
     case connect(host, port, sock_opts, timeout, s) do
@@ -225,15 +231,15 @@ defmodule Mysqlx.Protocol do
     case text_query_recv(state) do
       {:resultset, columns, rows, _flags, state} ->
         result = %Mysqlx.Result{rows: rows, connection_id: state.connection_id}
+        Logger.debug("resultset: #{inspect(result)}")
         {:ok, {result, columns}, clean_state(state)}
 
       {:ok, packet(msg: msg_ok()) = packet, state} ->
+        # Logger.debug("ok_packet: #{inspect(packet)}")
         handle_ok_packet(packet, query, state)
 
       {:ok, packet, state} ->
-        {:error, "TODO"}
-
-      # handle_error(packet, query, state)
+        handle_error(packet, query, state)
 
       {:error, reason} ->
         recv_error(reason, state)
@@ -251,12 +257,105 @@ defmodule Mysqlx.Protocol do
     end
   end
 
-  defp text_rows_recv(state, columns) do
-    # TODO
-    {:eof, 0, 0, state}
+  defp text_rows_recv(%{buffer: buffer} = state, columns) do
+    Logger.debug("#{inspect(:text_row_recv)}")
+    fields = Mysqlx.RowParser.decode_text_init(columns)
+    Logger.debug("#{inspect(fields)}")
+
+    case text_row_decode(%{state | buffer: :text_rows}, fields, [], buffer) do
+      {:ok, packet(msg: msg_eof(status_flags: flags)), rows, state} ->
+        Logger.debug("all rows recv")
+        {:eof, rows, flags, state}
+
+      {:ok, packet, _, state} ->
+        {:ok, packet, state}
+
+      other ->
+        other
+    end
   end
 
+  defp text_row_decode(
+         %{json_library: json_library} = s,
+         fields,
+         rows,
+         buffer
+       ) do
+    case decode_text_rows(buffer, fields, rows, json_library) do
+      {:ok, packet, rows, rest} ->
+        Logger.debug("#{inspect(packet)}")
+        {:ok, packet, rows, %{s | buffer: rest}}
+
+      {:more, rows, rest} ->
+        text_row_recv(s, fields, rows, rest)
+    end
+  end
+
+  defp text_row_recv(s, fields, rows, buffer) do
+    %{sock: {sock_mod, sock}, timeout: timeout} = s
+
+    case sock_mod.recv(sock, 0, timeout) do
+      {:ok, data} when buffer == "" ->
+        text_row_decode(s, fields, rows, data)
+
+      {:ok, data} ->
+        text_row_decode(s, fields, rows, buffer <> data)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp handle_error(
+         packet(msg: msg_err(error_code: code, error_message: message)),
+         query,
+         state
+       ) do
+    abort_statement(state, query, code, message)
+  end
+
+  defp abort_statement(s, query, code, message) do
+    abort_statement(s, query, %Mysqlx.Error{
+      mariadb: %{code: code, message: message},
+      connection_id: s.connection_id
+    })
+  end
+
+  defp abort_statement(s, query, error = %Mysqlx.Error{}) do
+    Logger.debug("aborting statement")
+
+    case query do
+      %Query{} ->
+        {:ok, nil, s} = handle_close(query, [], s)
+        {:error, error, clean_state(s)}
+
+      nil ->
+        {:error, error, clean_state(s)}
+    end
+  end
+
+  @doc """
+  DBConnection callback
+  """
+  # def handle_close(%Query{name: @reserved_prefix <> _ , reserved?: false} = query, _, s) do
+  #   reserved_error(query, s)
+  # end
+  def handle_close(%Query{type: :text}, _, s) do
+    {:ok, nil, s}
+  end
+
+  # def handle_close(%Query{type: :binary} = query, _, s) do
+  #   case close_lookup(query, s) do
+  #     {:close, id} ->
+  #       msg_send(stmt_close(command: com_stmt_close(), statement_id: id), s, 0)
+  #       {:ok, nil, s}
+  #     :closed ->
+  #       {:ok, nil, s}
+  #   end
+  # end
+
   defp columns_recv(state, num_cols) do
+    Logger.debug("#{inspect(:columns_recv)}")
     columns_recv(%{state | state: :column_definitions}, num_cols, [])
   end
 
@@ -273,6 +372,7 @@ defmodule Mysqlx.Protocol do
            )
        ), state} ->
         column = %Column{name: name, table: table, type: type, flags: flags}
+        Logger.debug("#{inspect(column)}")
         columns_recv(state, rem - 1, [column | columns])
 
       other ->
@@ -284,13 +384,24 @@ defmodule Mysqlx.Protocol do
     {:eof, Enum.reverse(columns), 0, state}
   end
 
+  defp columns_recv(%{deprecated_eof: false} = state, 0, columns) do
+    Logger.debug("#{inspect(columns)}")
+
+    case msg_recv(state) do
+      {:ok, packet(msg: msg_eof(status_flags: flags)), state} ->
+        {:eof, Enum.reverse(columns), flags, state}
+
+      other ->
+        other
+    end
+  end
+
   defp handshake_recv(state, request) do
     case msg_recv(state) do
       {:ok, packet, state} ->
         case handle_handshake(packet, request, state) do
           {:error, error} ->
-            # TODO
-            Logger.error(inspect(error))
+            do_disconnect(state, error, "") |> connected()
 
           other ->
             other
@@ -319,12 +430,12 @@ defmodule Mysqlx.Protocol do
     new_seqnum = seqnum + 1
     msg_send(msg, s, new_seqnum)
 
-    Logger.info("Sent SSL requelst")
+    # Logger.debug("Sent SSL requelst")
 
     case upgrade_to_ssl(s, opts) do
       {:ok, new_state} ->
         # move along to the actual handshake; now over SSL/TLS
-        Logger.info("SSL connection established")
+        # Logger.debug("SSL connection established")
         handle_handshake(packet(packet, seqnum: new_seqnum), opts, new_state)
 
       {:error, error} ->
@@ -350,7 +461,7 @@ defmodule Mysqlx.Protocol do
 
     deprecated_eof = (flag &&& @client_deprecate_eof) == @client_deprecate_eof
 
-    Logger.info("Got handshake packet")
+    # Logger.debug("Got handshake packet")
 
     msg_handshake(auth_plugin_data_1: salt1, auth_plugin_data_2: salt2) =
       handshake
@@ -375,7 +486,7 @@ defmodule Mysqlx.Protocol do
       )
 
     msg_send(msg, s, seqnum + 1)
-    Logger.info("Sent handshake response packet")
+    # Logger.debug("Sent handshake response packet")
 
     handshake_recv(
       %{s | state: :handshake_send, deprecated_eof: deprecated_eof},
@@ -385,31 +496,26 @@ defmodule Mysqlx.Protocol do
 
   # recieve ok packet
   defp handle_handshake(
-         packet(
-           msg:
-             msg_ok(
-               affected_rows: _affected_rows,
-               last_insert_id: _last_insert_id
-             ) = _packet
-         ),
+         packet(msg: msg_ok() = _packet),
          nil,
          state
        ) do
-    Logger.info("Connected to MySQL server")
+    # Logger.debug("Connected to MySQL server")
 
-    activate(state, state.buffer) |> connected()
-    # statement = "SET CHARACTER SET " <> (state.opts[:charset] || "utf8")
-    # query = %Query{type: :text, statement: statement}
-    # case send_text_query(state, statement) |> text_query_recv(query) do
-    #   {:error, error, _} ->
-    #     {:error, error}
-    #   {:ok, _, state} ->
-    #     activate(state, state.buffer) |> connected()
-    # end
+    statement = "SET CHARACTER SET " <> state.charset
+    query = %Query{type: :text, statement: statement}
+
+    case send_text_query(state, statement) |> text_query_recv(query) do
+      {:error, error, _} ->
+        {:error, error}
+
+      {:ok, _, state} ->
+        activate(state, state.buffer) |> connected()
+    end
   end
 
   # recieve error packet
-  defp handle_handshake(packet, query, state) do
+  defp handle_handshake(packet, query, _state) do
     # {:error, error, _} = handle_error(packet, query, state)
     Logger.error("Failed to connect: #{inspect(packet)}")
     {:error, %Mysqlx.Error{}}
