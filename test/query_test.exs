@@ -565,18 +565,23 @@ defmodule QueryTest do
   #   assert query("SELECT testfield FROM #{table} WHERE id = 1", []) == [[year]]
   # end
 
-  # test "non data statement", context do
-  #   :ok = query("BEGIN", [])
-  #   :ok = query("COMMIT", [])
-  # end
+  test "non data statement", context do
+    :ok = query("BEGIN", [])
+    :ok = query("COMMIT", [])
+  end
 
-  # test "result struct on select", context do
-  #   {:ok, res} = Mysqlx.Connection.query(context[:pid], "SELECT 1 AS first, 10 AS last", [])
+  test "result struct on select", context do
+    {:ok, res} =
+      Mysqlx.Connection.query(
+        context[:pid],
+        "SELECT 1 AS first, 10 AS last",
+        []
+      )
 
-  #   assert %Mysqlx.Result{} = res
-  #   assert res.columns == ["first", "last"]
-  #   assert res.num_rows == 1
-  # end
+    assert %Mysqlx.Result{} = res
+    assert res.columns == ["first", "last"]
+    assert res.num_rows == 1
+  end
 
   # test "columns list includes table name when include_table_name option is specified", context do
   #   table = "table_name_test"
