@@ -175,12 +175,6 @@ defmodule Mysqlx.TestHelper do
     end
   end
 
-  def capture_log(fun) do
-    Logger.remove_backend(:console)
-    fun.()
-    Logger.add_backend(:console, flush: true)
-  end
-
   def length_encode_row(row) do
     Enum.map_join(row, &(<<String.length(&1)>> <> &1))
   end
