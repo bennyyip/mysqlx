@@ -9,15 +9,18 @@ unix_exclude = [
 
 json_exclude = [json: System.get_env("JSON_SUPPORT") != "true"]
 geometry_exclude = [geometry: System.get_env("GEOMETRY_SUPPORT") == "false"]
+ssl_exclude = [ssl: true]
 
-ExUnit.start(exclude: unix_exclude ++ json_exclude ++ geometry_exclude)
+ExUnit.start(
+  exclude: unix_exclude ++ json_exclude ++ geometry_exclude ++ ssl_exclude
+)
 
 run_cmd = fn cmd ->
   key = :ecto_setup_cmd_output
   Process.put(key, "")
 
   status =
-    Mix.Shell.cmd(cmd, fn data ->
+    Mix.Shell.cmd(cmd, [], fn data ->
       current = Process.get(key)
       Process.put(key, current <> data)
     end)

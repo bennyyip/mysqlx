@@ -57,7 +57,6 @@ defmodule StartTest do
     test_opts =
       @opts ++
         [
-          hostname: "::1",
           after_connect: fn _ -> send(parent, :hi) end
         ]
 
@@ -80,6 +79,7 @@ defmodule StartTest do
     assert_receive :hi
   end
 
+  @tag :ssl
   test "ssl connection" do
     parent = self()
 
