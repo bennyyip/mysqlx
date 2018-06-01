@@ -12,10 +12,10 @@ defmodule QueryTest do
 
   setup context do
     connection_opts = context[:connection_opts] || []
-    {:ok, pid} = Mysqlx.Connection.start_link(connection_opts ++ @opts)
+    {:ok, pid} = Mysqlx.start_link(connection_opts ++ @opts)
 
     # remove all modes for this session to have the same behaviour on different versions of mysql/mariadb
-    {:ok, _} = Mysqlx.Connection.query(pid, "SET SESSION sql_mode = \"\";")
+    {:ok, _} = Mysqlx.query(pid, "SET SESSION sql_mode = \"\";")
     {:ok, [pid: pid]}
   end
 
@@ -26,7 +26,7 @@ defmodule QueryTest do
       password: "mysqlx_pass"
     ]
 
-    {:ok, pid} = Mysqlx.Connection.start_link(opts)
+    {:ok, pid} = Mysqlx.start_link(opts)
 
     context = [pid: pid]
 
@@ -44,7 +44,7 @@ defmodule QueryTest do
       skip_database: true
     ]
 
-    {:ok, pid} = Mysqlx.Connection.start_link(opts)
+    {:ok, pid} = Mysqlx.start_link(opts)
 
     context = [pid: pid]
 
@@ -572,7 +572,7 @@ defmodule QueryTest do
 
   test "result struct on select", context do
     {:ok, res} =
-      Mysqlx.Connection.query(
+      Mysqlx.query(
         context[:pid],
         "SELECT 1 AS first, 10 AS last",
         []
@@ -589,7 +589,7 @@ defmodule QueryTest do
   #   :ok = query("INSERT INTO #{table} (id, name) VALUES(?, ?)", [1, "test_name"])
 
   #   {:ok, res} =
-  #     Mysqlx.Connection.query(
+  #     Mysqlx.query(
   #       context[:pid],
   #       "SELECT id, name FROM #{table}",
   #       [],
@@ -612,7 +612,7 @@ defmodule QueryTest do
   #     query("INSERT INTO #{table2} (id, table1_id, name) VALUES(?, ?, ?)", [10, 1, "test_name_2"])
 
   #   {:ok, res} =
-  #     Mysqlx.Connection.query(
+  #     Mysqlx.query(
   #       context[:pid],
   #       "SELECT * FROM #{table1} JOIN #{table2} ON #{table1}.id = #{table2}.table1_id",
   #       [],
@@ -638,7 +638,7 @@ defmodule QueryTest do
   #   :ok = query("INSERT INTO #{table} (id, name) VALUES(?, ?)", [1, "test_name"])
 
   #   {:ok, res} =
-  #     Mysqlx.Connection.query(
+  #     Mysqlx.query(
   #       context[:pid],
   #       "SELECT id, name FROM #{table} t1",
   #       [],
@@ -655,18 +655,18 @@ defmodule QueryTest do
   #   :ok = query(~s{CREATE TABLE #{table} (num int)}, [])
   #   :ok = query(~s{INSERT INTO #{table} (num) VALUES (?)}, [1])
 
-  #   {:ok, res} = Mysqlx.Connection.query(context[:pid], "UPDATE #{table} SET num = 2", [])
+  #   {:ok, res} = Mysqlx.query(context[:pid], "UPDATE #{table} SET num = 2", [])
   #   assert %Mysqlx.Result{} = res
   #   assert res.num_rows == 1
 
-  #   {:ok, res} = Mysqlx.Connection.query(context[:pid], "UPDATE #{table} SET num = 2", [])
+  #   {:ok, res} = Mysqlx.query(context[:pid], "UPDATE #{table} SET num = 2", [])
   #   assert %Mysqlx.Result{} = res
   #   assert res.num_rows == 1
   # end
 
   # test "error struct", context do
   #   {:error, %Mysqlx.Error{}} =
-  #     Mysqlx.Connection.query(context[:pid], "SELECT 123 + `deertick`", [])
+  #     Mysqlx.query(context[:pid], "SELECT 123 + `deertick`", [])
   # end
 
   # test "insert", context do

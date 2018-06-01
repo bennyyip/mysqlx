@@ -99,7 +99,7 @@ defmodule Mysqlx.TestHelper do
     quote do
       pid = var!(context)[:pid]
 
-      case Mysqlx.Connection.query(
+      case Mysqlx.query(
              pid,
              unquote(stat),
              unquote(params),
