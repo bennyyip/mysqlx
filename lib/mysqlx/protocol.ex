@@ -39,10 +39,12 @@ defmodule Mysqlx.Protocol do
   @cursor_type_no_cursor 0x00
   @cursor_type_read_only 0x01
 
-  @capabilities @client_long_password ||| @client_found_rows ||| @client_long_flag |||
-                  @client_local_files ||| @client_protocol_41 ||| @client_transactions |||
-                  @client_secure_connection ||| @client_multi_statements ||| @client_multi_results |||
-                  @client_ps_multi_results ||| @client_deprecate_eof
+  @capabilities @client_long_password ||| @client_found_rows |||
+                  @client_long_flag ||| @client_local_files |||
+                  @client_protocol_41 ||| @client_transactions |||
+                  @client_secure_connection ||| @client_multi_statements |||
+                  @client_multi_results ||| @client_ps_multi_results |||
+                  @client_deprecate_eof
 
   defstruct sock: nil,
             timeout: nil,
@@ -81,7 +83,8 @@ defmodule Mysqlx.Protocol do
   """
   @spec checkout(state) ::
           {:ok, state}
-          | {:disconnect, Postgrex.Error.t() | %DBConnection.ConnectionError{}, state}
+          | {:disconnect, Postgrex.Error.t() | %DBConnection.ConnectionError{},
+             state}
   def checkout(%{buffer: :active_once} = s) do
     case setopts(s, [active: false], :active_once) do
       :ok -> recv_buffer(s)
@@ -94,7 +97,8 @@ defmodule Mysqlx.Protocol do
   """
   @spec checkin(state) ::
           {:ok, state}
-          | {:disconnect, Mysqlx.Error.t() | %DBConnection.ConnectionError{}, state}
+          | {:disconnect, Mysqlx.Error.t() | %DBConnection.ConnectionError{},
+             state}
   def checkin(%{buffer: buffer} = s) when is_binary(buffer) do
     activate(s, buffer)
   end
@@ -133,8 +137,11 @@ defmodule Mysqlx.Protocol do
     }
 
     case connect(host, port, sock_opts, timeout, s) do
-      {:ok, s} -> handshake_recv(s, %{opts: opts})
-      {:error, _} = error -> error
+      {:ok, s} ->
+        handshake_recv(s, %{opts: opts})
+
+      {:error, error} ->
+        {:error, %Mysqlx.Error{message: "#{error.message}"}}
     end
   end
 
@@ -206,16 +213,17 @@ defmodule Mysqlx.Protocol do
          %Mysqlx.Error{} = err,
          buffer
        ) do
-    {:disconnect, %{err | connection_id: connection_id}, %{state | buffer: buffer}}
+    {:disconnect, %{err | connection_id: connection_id},
+     %{state | buffer: buffer}}
   end
-
 
   @doc """
   DBConnection callback
   """
   @spec ping(state) ::
           {:ok, state}
-          | {:disconnect, Mysqlx.Error.t() | %DBConnection.ConnectionError{}, state}
+          | {:disconnect, Mysqlx.Error.t() | %DBConnection.ConnectionError{},
+             state}
   def ping(%{buffer: buffer} = state) when is_binary(buffer) do
     msg_send(msg_text_cmd(command: com_ping(), statement: ""), state, 0)
     ping_recv(state, :ping)
@@ -279,7 +287,8 @@ defmodule Mysqlx.Protocol do
   defp text_query_recv(state) do
     state = %{state | state: :column_count}
 
-    with {:ok, packet(msg: msg_column_count(column_count: num_cols)), state} <- msg_recv(state),
+    with {:ok, packet(msg: msg_column_count(column_count: num_cols)), state} <-
+           msg_recv(state),
          {:eof, columns, _, state} <- columns_recv(state, num_cols),
          {:eof, rows, flags, state} <- text_rows_recv(state, columns) do
       {:resultset, columns, rows, flags, state}
@@ -351,8 +360,6 @@ defmodule Mysqlx.Protocol do
   end
 
   defp abort_statement(s, query, error = %Mysqlx.Error{}) do
-    Logger.debug("aborting statement")
-
     case query do
       %Query{} ->
         {:ok, nil, s} = handle_close(query, [], s)
@@ -492,7 +499,8 @@ defmodule Mysqlx.Protocol do
 
     deprecated_eof = (flag &&& @client_deprecate_eof) == @client_deprecate_eof
 
-    msg_handshake(auth_plugin_data_1: salt1, auth_plugin_data_2: salt2) = handshake
+    msg_handshake(auth_plugin_data_1: salt1, auth_plugin_data_2: salt2) =
+      handshake
 
     scramble =
       case password = opts[:password] do
@@ -540,10 +548,9 @@ defmodule Mysqlx.Protocol do
   end
 
   # recieve error packet
-  defp handle_handshake(packet, query, _state) do
-    # {:error, error, _} = handle_error(packet, query, state)
-    Logger.error("Failed to connect: #{inspect(packet)}")
-    {:error, %Mysqlx.Error{}}
+  defp handle_handshake(packet, query, state) do
+    {:error, error, _} = handle_error(packet, query, state)
+    {:error, error}
   end
 
   defp set_initial_ssl_conn_state(opts) do
@@ -665,7 +672,8 @@ defmodule Mysqlx.Protocol do
   end
 
   defp msg_decode(
-         <<len::size(24)-little-integer, _seqnum::size(8)-integer, message::binary>> = header,
+         <<len::size(24)-little-integer, _seqnum::size(8)-integer,
+           message::binary>> = header,
          state
        )
        when byte_size(message) >= len do
@@ -771,7 +779,8 @@ defmodule Mysqlx.Protocol do
         {:ok, %{s | sock: {:ssl, ssl_sock}, ssl_conn_state: :connected}}
 
       {:error, reason} ->
-        {:error, %Mysqlx.Error{message: "failed to upgraded socket: #{inspect(reason)}"}}
+        {:error,
+         %Mysqlx.Error{message: "failed to upgraded socket: #{inspect(reason)}"}}
     end
   end
 
@@ -810,7 +819,8 @@ defmodule Mysqlx.Protocol do
 
   defp bxor_binary(b1, b2) do
     for(
-      {e1, e2} <- List.zip([:erlang.binary_to_list(b1), :erlang.binary_to_list(b2)]),
+      {e1, e2} <-
+        List.zip([:erlang.binary_to_list(b1), :erlang.binary_to_list(b2)]),
       do: e1 ^^^ e2
     )
     |> :erlang.list_to_binary()

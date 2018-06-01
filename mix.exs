@@ -26,8 +26,7 @@ defmodule Mysqlx.MixProject do
       {:decimal, "~> 1.0"},
       {:db_connection, "~> 1.1",
        github: "elixir-ecto/db_connection", ref: "4947966"},
-      {:connection, "~> 1.0"},
-      {:dialyxir, "~> 0.5", only: [:dev], runtime: false}
+      {:connection, "~> 1.0"}
     ]
   end
 end

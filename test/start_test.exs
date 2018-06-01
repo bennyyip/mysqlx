@@ -9,6 +9,48 @@ defmodule StartTest do
     backoff_type: :stop
   ]
 
+  test "connection_errors" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error,
+            {%Mysqlx.Error{
+               mariadb: %{message: "Unknown database 'non_existing'"}
+             },
+             _}} =
+             Mysqlx.start_link(
+               username: "mysqlx_user",
+               password: "mysqlx_pass",
+               database: "non_existing",
+               sync_connect: true,
+               backoff_type: :stop
+             )
+
+    assert {:error,
+            {%Mysqlx.Error{mariadb: %{message: "Access denied for user " <> _}},
+             _}} =
+             Mysqlx.start_link(
+               username: "non_existing",
+               database: "mysqlx_test",
+               sync_connect: true,
+               backoff_type: :stop
+             )
+
+    assert {:error,
+            {%Mysqlx.Error{
+               message:
+                 "tcp connect (localhost:60999): connection refused - :econnrefused"
+             },
+             _}} =
+             Mysqlx.start_link(
+               username: "mysqlx_user",
+               password: "mysqlx_pass",
+               database: "mysqlx_test",
+               port: 60999,
+               sync_connect: true,
+               backoff_type: :stop
+             )
+  end
+
   test "hostname port connection" do
     parent = self()
 
