@@ -270,7 +270,6 @@ defmodule Mysqlx.Protocol do
     case text_query_recv(state) do
       {:resultset, columns, rows, _flags, state} ->
         result = %Mysqlx.Result{rows: rows, connection_id: state.connection_id}
-        Logger.debug("resultset: #{inspect(result)}")
         {:ok, {result, columns}, clean_state(state)}
 
       {:ok, packet(msg: msg_ok()) = packet, state} ->
@@ -296,13 +295,10 @@ defmodule Mysqlx.Protocol do
   end
 
   defp text_rows_recv(%{buffer: buffer} = state, columns) do
-    Logger.debug("#{inspect(:text_row_recv)}")
     fields = Mysqlx.RowParser.decode_text_init(columns)
-    Logger.debug("#{inspect(fields)}")
 
     case text_row_decode(%{state | buffer: :text_rows}, fields, [], buffer) do
       {:ok, packet(msg: msg_eof(status_flags: flags)), rows, state} ->
-        Logger.debug("all rows recv")
         {:eof, rows, flags, state}
 
       {:ok, packet, _, state} ->
@@ -321,7 +317,6 @@ defmodule Mysqlx.Protocol do
        ) do
     case decode_text_rows(buffer, fields, rows, json_library) do
       {:ok, packet, rows, rest} ->
-        Logger.debug("#{inspect(packet)}")
         {:ok, packet, rows, %{s | buffer: rest}}
 
       {:more, rows, rest} ->
@@ -354,7 +349,7 @@ defmodule Mysqlx.Protocol do
 
   defp abort_statement(s, query, code, message) do
     abort_statement(s, query, %Mysqlx.Error{
-      mariadb: %{code: code, message: message},
+      mysql: %{code: code, message: message},
       connection_id: s.connection_id
     })
   end
@@ -396,7 +391,6 @@ defmodule Mysqlx.Protocol do
   # end
 
   defp columns_recv(state, num_cols) do
-    Logger.debug("#{inspect(:columns_recv)}")
     columns_recv(%{state | state: :column_definitions}, num_cols, [])
   end
 
@@ -413,7 +407,6 @@ defmodule Mysqlx.Protocol do
            )
        ), state} ->
         column = %Column{name: name, table: table, type: type, flags: flags}
-        Logger.debug("#{inspect(column)}")
         columns_recv(state, rem - 1, [column | columns])
 
       other ->
@@ -426,7 +419,6 @@ defmodule Mysqlx.Protocol do
   end
 
   defp columns_recv(%{deprecated_eof: false} = state, 0, columns) do
-    Logger.debug("#{inspect(columns)}")
 
     case msg_recv(state) do
       {:ok, packet(msg: msg_eof(status_flags: flags)), state} ->

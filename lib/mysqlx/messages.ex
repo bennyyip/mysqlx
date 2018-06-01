@@ -269,7 +269,6 @@ defmodule Mysqlx.Messages do
   # msg_column_count
   defp decode_msg(body, :column_count) do
     {column_count, _} = length_encoded_integer(body)
-    Logger.debug("column count: #{inspect(column_count)}")
     msg_column_count(column_count: column_count)
   end
 
@@ -304,7 +303,6 @@ defmodule Mysqlx.Messages do
 
   # msg_handshake
   defp decode_msg(<<protocol_version::8, rest::binary>> = _body, _state) do
-    Logger.debug("#{inspect(_state)}")
     [server_version, rest] = string_nul(rest)
 
     <<connection_id::little-size(32), auth_plugin_data_1::binary(8), 0::8,
@@ -392,9 +390,7 @@ defmodule Mysqlx.Messages do
 
       # row
       body ->
-        Logger.debug("#{inspect("here")}")
         row = Mysqlx.RowParser.decode_text_rows(body, fields, json_library)
-        Logger.debug("#{inspect(row)}")
         decode_text_rows(rest, fields, [row | rows], json_library)
     end
   end
