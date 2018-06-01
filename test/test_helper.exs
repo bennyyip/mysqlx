@@ -19,15 +19,9 @@ ExUnit.start()
 run_cmd = fn cmd ->
   key = :ecto_setup_cmd_output
   Process.put(key, "")
-  # TODO: Not relay on Mix.Shell.cmd
-  cmd_fun =
-    cond do
-      function_exported?(Mix.Shell, :cmd, 2) -> &Mix.Shell.cmd/2
-      function_exported?(Mix.Shell, :cmd, 3) -> &Mix.Shell.cmd(&1, [], &2)
-    end
 
   status =
-    cmd_fun.(cmd, fn data ->
+    Mix.Shell.cmd(cmd, fn data ->
       current = Process.get(key)
       Process.put(key, current <> data)
     end)
@@ -179,4 +173,3 @@ defmodule Mysqlx.TestHelper do
     Enum.map_join(row, &(<<String.length(&1)>> <> &1))
   end
 end
-
