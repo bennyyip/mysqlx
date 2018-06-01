@@ -65,6 +65,7 @@ defmodule StartTest do
     assert_receive :hi
   end
 
+  @tag :unix
   test "unix domain socket connection" do
     parent = self()
 

@@ -1,20 +1,16 @@
-mdb_socket = System.get_env("MDBSOCKET")
+mdb_socket = System.get_env("MDBSOCKET") || "/run/mysqld/mysqld.sock"
+otp_release = :otp_release |> :erlang.system_info() |> List.to_integer()
 
-socket? =
-  match?({:unix, _}, :os.type()) and
-    List.to_integer(:erlang.system_info(:otp_release)) >= 19 and
-    is_binary(mdb_socket) and File.exists?(mdb_socket)
+unix_exclude = [
+  unix:
+    not (otp_release >= 20 and is_binary(mdb_socket) and
+           File.exists?(mdb_socket))
+]
 
-ExUnit.configure(
-  exclude: [
-    ssl_tests: true,
-    json: System.get_env("JSON_SUPPORT") != "true",
-    socket: not socket?,
-    geometry: System.get_env("GEOMETRY_SUPPORT") == "false"
-  ]
-)
+json_exclude = [json: System.get_env("JSON_SUPPORT") != "true"]
+geometry_exclude = [geometry: System.get_env("GEOMETRY_SUPPORT") == "false"]
 
-ExUnit.start()
+ExUnit.start(exclude: unix_exclude ++ json_exclude ++ geometry_exclude)
 
 run_cmd = fn cmd ->
   key = :ecto_setup_cmd_output
