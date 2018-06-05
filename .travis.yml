@@ -33,6 +33,6 @@ matrix:
 before_install:
     - sudo service mysql stop
     - docker pull $DB || true
-    - docker run --name mariadb -p 3306:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=1 -d $DB
+    - docker run --name mysql -p 3306:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=1 -d $DB --default-authentication-plugin=mysql_native_password
 script: "JSON_SUPPORT=$JSON_SUPPORT mix test --cover"
 
