@@ -14,7 +14,7 @@ defmodule StartTest do
 
     assert {:error,
             {%Mysqlx.Error{
-               mariadb: %{message: "Unknown database 'non_existing'"}
+               mysql: %{message: "Unknown database 'non_existing'"}
              },
              _}} =
              Mysqlx.start_link(
@@ -26,7 +26,7 @@ defmodule StartTest do
              )
 
     assert {:error,
-            {%Mysqlx.Error{mariadb: %{message: "Access denied for user " <> _}},
+            {%Mysqlx.Error{mysql: %{message: "Access denied for user " <> _}},
              _}} =
              Mysqlx.start_link(
                username: "non_existing",
