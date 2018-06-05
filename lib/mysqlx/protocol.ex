@@ -812,37 +812,4 @@ defmodule Mysqlx.Protocol do
     )
     |> :erlang.list_to_binary()
   end
-
-  defp hash(bin) when is_binary(bin), do: bin |> to_charlist |> hash
-  defp hash(s), do: hash(s, 1_345_345_333, 305_419_889, 7)
-
-  defp hash([c | s], n1, n2, add) do
-    n1 = bxor(n1, (band(n1, 63) + add) * c + n1 * 256)
-    n2 = n2 + bxor(n2 * 256, n1)
-    add = add + c
-    hash(s, n1, n2, add)
-  end
-
-  defp hash([], n1, n2, _add) do
-    mask = bsl(1, 31) - 1
-    {band(n1, mask), band(n2, mask)}
-  end
-
-  defp rnd(n, seed1, seed2) do
-    mod = bsl(1, 30) - 1
-    rnd(n, [], rem(seed1, mod), rem(seed2, mod))
-  end
-
-  defp rnd(0, list, _, _) do
-    Enum.reverse(list)
-  end
-
-  defp rnd(n, list, seed1, seed2) do
-    mod = bsl(1, 30) - 1
-    seed1 = rem(seed1 * 3 + seed2, mod)
-    seed2 = rem(seed1 + seed2 + 33, mod)
-    float = seed1 / mod * 31
-    val = trunc(float) + 64
-    rnd(n - 1, [val | list], seed1, seed2)
-  end
 end
