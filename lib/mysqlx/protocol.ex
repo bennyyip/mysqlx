@@ -11,7 +11,6 @@ defmodule Mysqlx.Protocol do
 
   @maxpacketbytes 50_000_000
   @mysql_native_password "mysql_native_password"
-  @mysql_old_password :mysql_old_password
 
   @timeout 15_000
   @nonposix_errors [:closed, :timeout]
@@ -419,7 +418,6 @@ defmodule Mysqlx.Protocol do
   end
 
   defp columns_recv(%{deprecated_eof: false} = state, 0, columns) do
-
     case msg_recv(state) do
       {:ok, packet(msg: msg_eof(status_flags: flags)), state} ->
         {:eof, Enum.reverse(columns), flags, state}
@@ -795,9 +793,6 @@ defmodule Mysqlx.Protocol do
 
   defp password("", password, salt), do: mysql_native_password(password, salt)
 
-  defp password(@mysql_old_password, password, salt),
-    do: mysql_old_password(password, salt)
-
   defp mysql_native_password(password, salt) do
     stage1 = :crypto.hash(:sha, password)
     stage2 = :crypto.hash(:sha, stage1)
@@ -816,16 +811,6 @@ defmodule Mysqlx.Protocol do
       do: e1 ^^^ e2
     )
     |> :erlang.list_to_binary()
-  end
-
-  defp mysql_old_password(password, salt) do
-    {p1, p2} = hash(password)
-    {s1, s2} = hash(salt)
-    seed1 = bxor(p1, s1)
-    seed2 = bxor(p2, s2)
-    list = rnd(9, seed1, seed2)
-    {l, [extra]} = Enum.split(list, 8)
-    l |> Enum.map(&bxor(&1, extra - 64)) |> to_string
   end
 
   defp hash(bin) when is_binary(bin), do: bin |> to_charlist |> hash
