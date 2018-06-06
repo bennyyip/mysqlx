@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/bennyyip/mysqlx.svg?branch=master)](https://travis-ci.org/bennyyip/mysqlx)
+=======
 # Mysqlx
 
 **TODO: Add description**
