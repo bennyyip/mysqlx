@@ -87,6 +87,47 @@ defmodule Mysqlx.Messages do
   # Drop warning for now
   _ = @error_fields
 
+  @types [
+    float: [field_type_float: 0x04, field_type_double: 0x05],
+    decimal: [field_type_decimal: 0x00, field_type_newdecimal: 0xF6],
+    integer: [
+      field_type_tiny: 0x01,
+      field_type_short: 0x02,
+      field_type_long: 0x03,
+      field_type_int24: 0x09,
+      field_type_year: 0x0D,
+      field_type_longlong: 0x08
+    ],
+    timestamp: [field_type_timestamp: 0x07, field_type_datetime: 0x0C],
+    date: [field_type_date: 0x0A],
+    time: [field_type_time: 0x0B],
+    bit: [field_type_bit: 0x10],
+    string: [
+      field_type_varchar: 0x0F,
+      field_type_tiny_blob: 0xF9,
+      field_type_medium_blob: 0xFA,
+      field_type_long_blob: 0xFB,
+      field_type_blob: 0xFC,
+      field_type_var_string: 0xFD,
+      field_type_string: 0xFE
+    ],
+    json: [field_type_json: 0xF5],
+    geometry: [field_type_geometry: 0xFF],
+    null: [field_type_null: 0x06]
+  ]
+
+  def __type__(:decode, _type, nil), do: nil
+
+  for {_type, list} <- @types,
+      {name, id} <- list do
+    def __type__(:id, unquote(name)), do: unquote(id)
+  end
+
+  for {type, list} <- @types,
+      {name, id} <- list do
+    def __type__(:type, unquote(id)), do: {unquote(type), unquote(name)}
+  end
+
   defrecord :msg_ok, [
     :affected_rows,
     :last_insert_id,
@@ -100,6 +141,13 @@ defmodule Mysqlx.Messages do
     :state_marker,
     :sql_state,
     :error_message
+  ]
+
+  defrecord :msg_eof, [
+    :warings,
+    :status_flags,
+    ## Since version MySQL of 5.7.X, MySQL sends bigger eof messages without any documentation, what is  added.
+    :message
   ]
 
   defrecord :msg_handshake, [
@@ -130,10 +178,33 @@ defmodule Mysqlx.Messages do
     :character_set
   ]
 
-  defrecord :msg_text_command, [
-    :header,
-    :body
+  defrecord :msg_text_cmd, [
+    :command,
+    :statement
   ]
+
+  defrecord :msg_column_count, [
+    :column_count
+  ]
+
+  defrecord :msg_column_definition, [
+    :catalog,
+    :schema,
+    :table,
+    :org_table,
+    :name,
+    :org_name,
+    :length_of_fixed_fields,
+    :character_set,
+    :max_column_size,
+    :type,
+    :flags,
+    :decimals
+  ]
+
+  # defrecord :msg_text_row, [
+  #   :row
+  # ]
 
   def decode(
         <<len::size(24)-little-integer, seqnum::8, body::binary(len),
@@ -182,6 +253,54 @@ defmodule Mysqlx.Messages do
     )
   end
 
+  # msg_eof
+  defp decode_msg(
+         <<254::8, warings::little-size(16), status_flags::little-size(16),
+           message::binary>> = _body,
+         _state
+       ) do
+    msg_eof(
+      warings: warings,
+      status_flags: status_flags,
+      message: message
+    )
+  end
+
+  # msg_column_count
+  defp decode_msg(body, :column_count) do
+    {column_count, _} = length_encoded_integer(body)
+    msg_column_count(column_count: column_count)
+  end
+
+  # msg_column_definition
+  defp decode_msg(body, :column_definitions) do
+    {catalog, rest} = length_encoded_string(body)
+    {schema, rest} = length_encoded_string(rest)
+    {table, rest} = length_encoded_string(rest)
+    {org_table, rest} = length_encoded_string(rest)
+    {name, rest} = length_encoded_string(rest)
+    {org_name, rest} = length_encoded_string(rest)
+    {length_of_fixed_fields, rest} = length_encoded_integer(rest)
+
+    <<character_set::little-size(16), max_column_size::little-size(32), type::8,
+      flags::little-size(16), decimals::8, _::little-size(16)>> = rest
+
+    msg_column_definition(
+      catalog: catalog,
+      schema: schema,
+      table: table,
+      org_table: org_table,
+      name: name,
+      org_name: org_name,
+      length_of_fixed_fields: length_of_fixed_fields,
+      character_set: character_set,
+      max_column_size: max_column_size,
+      type: type,
+      flags: flags,
+      decimals: decimals
+    )
+  end
+
   # msg_handshake
   defp decode_msg(<<protocol_version::8, rest::binary>> = _body, _state) do
     [server_version, rest] = string_nul(rest)
@@ -207,6 +326,14 @@ defmodule Mysqlx.Messages do
       plugin: plugin
     )
   end
+
+  # # msg_text_row
+  # defp decode_msg(
+  #        body,
+  #        :text_rows
+  #      ) do
+  #   nil
+  # end
 
   # msg_ssl_request
   defp encode_msg(
@@ -236,14 +363,40 @@ defmodule Mysqlx.Messages do
       password::binary, database::binary, 0::8>>
   end
 
-  # msg_text_command
+  # msg_text_cmd
   defp encode_msg(
-         msg_text_command(
-           header: header,
-           body: body
+         msg_text_cmd(
+           command: command,
+           statement: statement
          )
        ) do
-    <<header::8, body::binary>>
+    <<command::8, statement::binary>>
+  end
+
+  def decode_text_rows(
+        <<len::size(24)-little-integer, seqnum::size(8)-integer,
+          body::size(len)-binary, rest::binary>>,
+        fields,
+        rows,
+        json_library
+      ) do
+    case body do
+      # eof
+      <<254::8, _::binary>> = body when byte_size(body) < 9 ->
+        msg = decode_msg(body, :text_rows)
+
+        {:ok, packet(size: len, seqnum: seqnum, msg: msg, body: body), rows,
+         rest}
+
+      # row
+      body ->
+        row = Mysqlx.RowParser.decode_text_rows(body, fields, json_library)
+        decode_text_rows(rest, fields, [row | rows], json_library)
+    end
+  end
+
+  def decode_text_rows(<<rest::binary>>, _fields, rows, _json_library) do
+    {:more, rows, rest}
   end
 
   # Due to Bug#59453(http://bugs.mysql.com/bug.php?id=59453)

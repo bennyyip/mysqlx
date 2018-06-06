@@ -1,6 +1,6 @@
 #!/bin/sh
 
-mix format && mix test
+mix test
 RES=$?
 
 if [ $RES -ne 0 ]; then

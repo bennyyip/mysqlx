@@ -1,14 +1,16 @@
 defmodule Mysqlx.Error do
-  @moduledoc false
-  defexception [:message, :mariadb, :connection_id]
-
-  @type t :: %Mysqlx.Error{}
+  defexception [:message, :tag, :action, :reason, :mysql, :connection_id]
 
   def message(e) do
-    e.message || ""
-  end
+    cond do
+      kw = e.mysql ->
+        "(#{kw[:code]}): #{kw[:message]}"
 
-  def exception(arg) do
-    super(arg)
+      tag = e.tag ->
+        "[#{tag}] `#{e.action}` failed with: #{inspect(e.reason)}"
+
+      true ->
+        e.message || ""
+    end
   end
 end
