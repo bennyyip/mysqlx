@@ -23,15 +23,18 @@ unix_exclude = [
 
 json_exclude = [json: System.get_env("JSON_SUPPORT") != "true"]
 geometry_exclude = [geometry: System.get_env("GEOMETRY_SUPPORT") == "false"]
+ssl_exclude = [ssl: true]
 
-ExUnit.start(exclude: unix_exclude ++ json_exclude ++ geometry_exclude)
+ExUnit.start(
+  exclude: unix_exclude ++ json_exclude ++ geometry_exclude ++ ssl_exclude
+)
 
 run_cmd = fn cmd ->
   key = :ecto_setup_cmd_output
   Process.put(key, "")
 
   status =
-    Mix.Shell.cmd(cmd, fn data ->
+    Mix.Shell.cmd(cmd, [], fn data ->
       current = Process.get(key)
       Process.put(key, current <> data)
     end)
@@ -52,7 +55,7 @@ mysql_port = System.get_env("MDBPORT") || 3306
 mysql_host = System.get_env("MDBHOST") || "localhost"
 
 mysql_connect =
-  "-u root #{mysql_pass_switch} --host=#{mysql_host} --port=#{mysql_port} --protocol=tcp"
+  "-u root #{mysql_pass_switch} --host=#{mysql_host} --port=#{mysql_port} --protocol=tcp --default_auth=mysql_native_password"
 
 sql = """
   CREATE TABLE test1 (id serial, title text);
@@ -61,11 +64,7 @@ sql = """
   DROP TABLE test1;
 """
 
-create_user =
-  case System.get_env("DB") do
-    "mysql:5.6" -> "CREATE USER"
-    _ -> "CREATE USER IF NOT EXISTS"
-  end
+create_user = "CREATE USER IF NOT EXISTS"
 
 cmds = [
   ~s(mysql #{mysql_connect} -e "DROP DATABASE IF EXISTS mysqlx_test;"),

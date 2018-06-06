@@ -1,0 +1,38 @@
+language: elixir
+elixir:
+  - 1.4
+  - 1.5
+  - 1.6
+otp_release:
+  - 20.2
+services: docker
+notifications:
+  recipients:
+    - yebenmy@protonmail.com
+sudo: false
+env:
+    global:
+        - MDBSOCKET=/var/run/mysqld/mysqld.sock
+    matrix:
+        - DB=mariadb:10.1 JSON_SUPPORT=false
+        - DB=mariadb:10.2 JSON_SUPPORT=false
+        - DB=mariadb:10.3 JSON_SUPPORT=false GEOMETRY_SUPPORT=false
+        - DB=mysql:8.0 JSON_SUPPORT=true
+        - DB=mysql:5.7 JSON_SUPPORT=true
+matrix:
+  include:
+    # - elixir: 1.4
+    #   otp_release: 19.3
+    #   env: DB=mysql:8.0 JSON_SUPPORT=true
+    - elixir: 1.5
+      otp_release: 19.3
+      env: DB=mysql:5.7 JSON_SUPPORT=true
+    - elixir: 1.6
+      otp_release: 20.1
+      env: DB=mysql:5.7 JSON_SUPPORT=true
+before_install:
+    - sudo service mysql stop
+    - docker pull $DB || true
+    - docker run --name mysql -p 3306:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=1 -d $DB --default-authentication-plugin=mysql_native_password
+script: "JSON_SUPPORT=$JSON_SUPPORT mix test --cover"
+
